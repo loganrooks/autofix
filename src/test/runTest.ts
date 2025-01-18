@@ -27,11 +27,28 @@ async function copyFixtures(projectRoot: string, workspacePath: string): Promise
         throw new Error(`Failed to copy fixtures: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
+async function cleanup(workspacePath?: string): Promise<void> {
+    if (workspacePath) {
+        try {
+            await fs.rm(workspacePath, { recursive: true, force: true });
+            console.log('Cleaned up workspace:', workspacePath);
+        } catch (err) {
+            console.error('Cleanup failed:', err);
+        }
+    }
+}
+
+async function exitWithError(error: unknown, code = 1): Promise<never> {
+    console.error('Error:', error instanceof Error ? error.message : String(error));
+    await cleanup(globalWorkspacePath);
+    process.exit(code);
+}
+
+let globalWorkspacePath: string | undefined;
 
 async function main() {
     const tmpDir = os.tmpdir();
     const timestamp = new Date().getTime().toString();
-    let workspacePath: string | undefined;
     
     try {
         // Use absolute paths and ensure proper directory structure
@@ -40,13 +57,13 @@ async function main() {
         const extensionTestsPath = path.resolve(__dirname, './suite');
 
         // Setup test workspace
-        workspacePath = await createTestWorkspace(tmpDir, timestamp);
-        await copyFixtures(projectRoot, workspacePath);
+        globalWorkspacePath = await createTestWorkspace(tmpDir, timestamp);
+        await copyFixtures(projectRoot, globalWorkspacePath);
 
         console.log('Test paths:', {
             extensionDevelopmentPath,
             extensionTestsPath,
-            workspacePath
+            workspacePath: globalWorkspacePath
         });
 
         // Run tests
@@ -54,7 +71,7 @@ async function main() {
             extensionDevelopmentPath,
             extensionTestsPath,
             launchArgs: [
-                workspacePath,
+                globalWorkspacePath,
                 '--disable-gpu',
                 '--disable-extensions',
                 '--disable-updates',
@@ -67,23 +84,19 @@ async function main() {
                 MOCHA_TIMEOUT: '60000'
             }
         });
+
+        await cleanup(globalWorkspacePath);
+        process.exit(0);
     } catch (err) {
-        console.error('Failed to run tests:', err);
-        process.exit(1);
-    } finally {
-        // Cleanup workspace
-        if (workspacePath) {
-            await fs.rm(workspacePath, { recursive: true, force: true }).catch(() => {});
-        }
+        await exitWithError(err);
     }
 }
 
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught exception:', err);
-    process.exit(1);
-});
+// Handle process events
+process.on('uncaughtException', exitWithError);
+process.on('unhandledRejection', exitWithError);
+process.on('SIGTERM', () => exitWithError(new Error('Process terminated')));
+process.on('SIGINT', () => exitWithError(new Error('Process interrupted')));
 
-main().catch(err => {
-    console.error('Test run failed:', err);
-    process.exit(1);
-});
+// Start tests
+main().catch(exitWithError);

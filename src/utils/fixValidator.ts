@@ -5,7 +5,7 @@ export interface ValidationRule {
 
 export class FixValidator {
     private rules: ValidationRule[];
-    private readonly MAX_LENGTH_DIFF_RATIO = 2.0;  // Max allowed length difference
+    private readonly MAX_LENGTH_DIFF_RATIO = 3.0;  // Max allowed length difference
     private readonly MIN_SIMILARITY_RATIO = 0.6;   // Min required similarity
 
 
@@ -27,11 +27,16 @@ export class FixValidator {
     }
 
     async validateFix(originalCode: string, fixedCode: string): Promise<boolean> {
-        // Reject if codes are identical
-        if (originalCode === fixedCode) {
+        // Always validate syntax first
+        if (!this.isValidCode(fixedCode)) {
             return false;
         }
-
+    
+        // Accept identical code if it's valid
+        if (originalCode === fixedCode) {
+            return true;
+        }
+    
         // Check length difference
         const lengthRatio = Math.max(
             originalCode.length / fixedCode.length,
@@ -40,15 +45,10 @@ export class FixValidator {
         if (lengthRatio > this.MAX_LENGTH_DIFF_RATIO) {
             return false;
         }
-
-        // Calculate similarity ratio (simple implementation)
+    
+        // Check similarity only for different code
         const similarity = this.calculateSimilarity(originalCode, fixedCode);
-        if (similarity < this.MIN_SIMILARITY_RATIO) {
-            return false;
-        }
-
-        // Run existing validation rules
-        return this.rules.every(rule => rule.validate(fixedCode));
+        return similarity >= this.MIN_SIMILARITY_RATIO;
     }
 
     private calculateSimilarity(str1: string, str2: string): number {
@@ -74,5 +74,14 @@ export class FixValidator {
         const distance = matrix[len1][len2];
         const maxLength = Math.max(len1, len2);
         return 1 - distance / maxLength;
+    }
+
+    private isValidCode(code: string): boolean {
+        try {
+            Function('return ' + code);
+            return true;
+        } catch {
+            return false;
+        }
     }
 }

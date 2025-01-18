@@ -1,4 +1,5 @@
 import { BatchProcessor } from '../../utils/batchProcessor';
+import { Logger } from '../../utils/logger';
 import { describe, it, beforeEach } from 'mocha';
 import { expect } from 'chai';
 import * as sinon from 'sinon';
@@ -14,6 +15,11 @@ describe('BatchProcessor', () => {
     beforeEach(() => {
         processItem = sinon.stub().resolves();
         processor = new BatchProcessor(2, processItem);
+        Logger.init();
+    });
+
+    afterEach(() => {
+        Logger.dispose();
     });
 
     it('should process items in batches', async () => {

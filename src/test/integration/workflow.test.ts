@@ -3,35 +3,56 @@ import { CopilotAutoFixer } from '../../copilotAutoFixer';
 import { describe, it, beforeEach, afterEach } from 'mocha';
 import { expect } from 'chai';
 import * as sinon from 'sinon';
+import { Logger } from '../../utils/logger';
 
 describe('Workflow Integration', () => {
     let autoFixer: CopilotAutoFixer;
     let sandbox: sinon.SinonSandbox;
-    let mockDocument: vscode.TextDocument;
     let mockEditor: vscode.TextEditor;
+    let disposables: vscode.Disposable[] = [];
 
-    beforeEach(() => {
+    beforeEach(async () => {
         sandbox = sinon.createSandbox();
-        autoFixer = new CopilotAutoFixer();
-
-        mockDocument = {
-            uri: { fsPath: '/test/file.ts' },
-            getText: sandbox.stub().returns('test code'),
-            lineCount: 1,
-            version: 1
-        } as any;
-
+        
+        // Initialize logger first
+        Logger.init();
+        
+        // Mock vscode APIs
         mockEditor = {
-            document: mockDocument,
+            document: {
+                uri: { fsPath: '/test/file.ts' },
+                getText: () => 'test code',
+                lineCount: 1,
+                version: 1
+            },
+            setDecorations: sandbox.stub(),
             selection: new vscode.Selection(0, 0, 0, 0)
         } as any;
 
-        sandbox.stub(vscode.workspace, 'isTrusted').value(true);
+        // Mock command registration before creating AutoFixer
+        sandbox.stub(vscode.commands, 'registerCommand').returns({
+            dispose: () => {}
+        });
+
+         // Create AutoFixer after mocks
+         autoFixer = new CopilotAutoFixer();
+        
+         // Store all disposables
+         disposables.push(autoFixer);
+     });
+
+     afterEach(() => {
+        // Cleanup in reverse order
+        while (disposables.length) {
+            const disposable = disposables.pop();
+            if (disposable) {
+                disposable.dispose();
+            }
+        }
+        sandbox.restore();
+        Logger.dispose();
     });
 
-    afterEach(() => {
-        sandbox.restore();
-    });
 
     it('should complete full fix workflow', async () => {
         const diagnostic = new vscode.Diagnostic(
@@ -41,7 +62,7 @@ describe('Workflow Integration', () => {
         );
     
         sandbox.stub(vscode.languages, 'getDiagnostics')
-            .returns([[mockDocument.uri, [diagnostic]]]);
+            .returns([[mockEditor.document.uri, [diagnostic]]]);
     
         const copilotStub = sandbox.stub(vscode.commands, 'executeCommand')
             .resolves(['const x = 1;']);
@@ -57,7 +78,7 @@ describe('Workflow Integration', () => {
 
     it('should handle undo operation', async () => {
         const fix = {
-            document: mockDocument.uri,
+            document: mockEditor.document.uri,
             range: new vscode.Range(0, 0, 0, 1),
             oldText: 'const x = 1',
             newText: 'const x = 1;'
@@ -74,7 +95,7 @@ describe('Workflow Integration', () => {
     });
 
     it('should batch process multiple documents', async () => {
-        const documents = [mockDocument, mockDocument];
+        const documents = [mockEditor.document, mockEditor.document];
         const processStub = sandbox.stub(autoFixer['batchProcessor'], 'processDocuments')
             .resolves();
 
@@ -85,27 +106,22 @@ describe('Workflow Integration', () => {
     });
 
     it('should preview fixes when enabled', async () => {
-        sandbox.stub(vscode.window, 'showTextDocument').resolves(mockEditor);
+        const showTextDocumentStub = sandbox.stub(vscode.window, 'showTextDocument')
+            .resolves({
+                ...mockEditor,
+                setDecorations: sandbox.stub()
+            });
+    
         sandbox.stub(vscode.window, 'showInformationMessage')
-            .resolves({ title: 'Apply' } as vscode.MessageItem); // Fix MessageItem type
-    
-        const diagnostics = [
-            new vscode.Diagnostic(
-                new vscode.Range(0, 0, 0, 1),
-                'test error',
-                vscode.DiagnosticSeverity.Error
-            )
-        ];
-    
-        sandbox.stub(vscode.languages, 'getDiagnostics')
-            .returns([[mockDocument.uri, diagnostics]]);
+            .resolves({ title: 'Apply' } as vscode.MessageItem);
     
         const result = await autoFixer['previewAndApplyFix'](
             'const x = 1;',
-            mockDocument,
-            diagnostics[0].range // Fix: use diagnostics array item
+            mockEditor.document,
+            new vscode.Range(0, 0, 0, 1)
         );
     
         expect(result).to.be.true;
+        expect(showTextDocumentStub.called).to.be.true;
     });
 });
