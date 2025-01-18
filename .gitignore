@@ -4,6 +4,8 @@
 /dist
 /tmp
 /out-tsc
+out/*
+
 
 # Runtime data
 pids
@@ -44,6 +46,7 @@ bower_components
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+.vscode-test/*
 
 # misc
 .sass-cache

@@ -1,0 +1,13 @@
+{
+    "require": ["ts-node/register"],
+    "extension": ["ts"],
+    "spec": ["src/test/**/*.test.ts"],
+    "timeout": 10000,
+    "ui": "bdd",
+    "watch-files": ["src/**/*.ts"],
+    "watch-ignore": ["node_modules", "dist", "out"],
+    "reporter": "spec",
+    "recursive": true,
+    "colors": true,
+    "exit": true
+}

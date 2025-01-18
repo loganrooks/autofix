@@ -1,0 +1,28 @@
+{
+    "compilerOptions": {
+      "module": "commonjs",
+      "target": "ES2020",
+      "outDir": "out",
+      "lib": ["ES2020", "dom"],
+      "sourceMap": true,
+      "rootDir": "src",
+      "strict": true,
+      "noImplicitReturns": true,
+      "noFallthroughCasesInSwitch": true,
+      "noUnusedParameters": false,  // Change: Allow unused parameters for VS Code API compatibility
+      "noImplicitAny": true,
+      "noImplicitThis": true,
+      "esModuleInterop": true,
+      "resolveJsonModule": true,    // Add: Allow importing JSON files
+      "declaration": true,          // Add: Generate declaration files
+      "skipLibCheck": true         // Add: Skip type checking of declaration files
+    },
+    "include": [                   // Add: Explicitly include source files
+      "src/**/*"
+    ],
+    "exclude": [
+      "node_modules",
+      ".vscode-test",
+      "out"                        // Add: Exclude output directory
+    ]
+  }
