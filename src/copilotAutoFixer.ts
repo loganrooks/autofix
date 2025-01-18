@@ -14,6 +14,7 @@ import { FixCache } from './utils/fixCache';
 import { RetryStrategy } from './utils/retryStrategy';
 import { BatchProcessor } from './utils/batchProcessor';
 import { WorkspaceTrustError } from './errors';
+import { DisposableManager } from './utils/disposableManager';
 
 /**
  * Main class responsible for fixing code issues using GitHub Copilot
@@ -28,6 +29,8 @@ export class CopilotAutoFixer {
     private readonly telemetry: TelemetryReporter;
     private readonly fixHistory: FixHistory;
     private readonly batchProcessor: BatchProcessor<vscode.TextDocument>;
+    private readonly disposables: DisposableManager;
+    
 
     // UI components
     private readonly statusBarItem: vscode.StatusBarItem;
@@ -42,32 +45,40 @@ export class CopilotAutoFixer {
         this.retryStrategy = new RetryStrategy();
         this.validator = new FixValidator();
         this.errorClassifier = new ErrorClassifier();
-        this.backupManager = new FileBackupManager();
-        this.telemetry = new TelemetryReporter();
         this.fixHistory = new FixHistory();
+        this.disposables = new DisposableManager();  
+
         
         // Load configuration
         this.config = Settings.configuration;
-        
-        // Initialize batch processor with unified pipeline
-        this.batchProcessor = new BatchProcessor<vscode.TextDocument>(
+
+        // Initialize UI
+        this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+        this.statusBarItem.text = "$(copilot) AutoFixer";
+        this.statusBarItem.show();
+        this.disposables.add(this.statusBarItem);
+
+        this.backupManager = new FileBackupManager();
+        this.telemetry = new TelemetryReporter();
+
+         // Initialize batch processor with unified pipeline
+         this.batchProcessor = new BatchProcessor<vscode.TextDocument>(
             Settings.configuration.batchSize || 5,
             async (document) => {
                 await this.fixDocument(document);
             }
         );
 
-        // Initialize UI
-        this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-        this.statusBarItem.text = "$(copilot) AutoFixer";
-        this.statusBarItem.show();
 
-        // Register undo command
-        const undoCommand = vscode.commands.registerCommand('copilotAutoFixer.undo', () => {
-            this.undo().catch(error => {
-                vscode.window.showErrorMessage(`Failed to undo: ${error.message}`);
-            });
-        });
+        this.disposables.add(
+            vscode.commands.registerCommand('copilotAutoFixer.fix', this.attemptFix.bind(this))
+        );
+        this.disposables.add(
+            vscode.commands.registerCommand('copilotAutoFixer.undo', this.undo.bind(this))
+        )
+        
+        this.disposables.add(this.backupManager);
+        this.disposables.add(this.telemetry);
     }
 
     
@@ -161,6 +172,8 @@ export class CopilotAutoFixer {
             },
             backgroundColor: new vscode.ThemeColor('diffEditor.insertedLineBackground'),
         });
+        this.disposables.add(decorationType); // Track decoration for disposal
+
     
         let previewEditor: vscode.TextEditor | undefined;
         
@@ -371,13 +384,10 @@ export class CopilotAutoFixer {
     
     dispose(): void {
         // Only dispose items implementing vscode.Disposable
-        this.statusBarItem.dispose();
-        this.backupManager.dispose();
-        this.telemetry.dispose();
-        
+        this.disposables.dispose();
+
         // Clean up processors and handlers
         this.batchProcessor.clear();
-        Logger.dispose();
         
         // Reset state
         this.isFixing = false;

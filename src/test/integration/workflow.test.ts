@@ -4,20 +4,30 @@ import { describe, it, beforeEach, afterEach } from 'mocha';
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { Logger } from '../../utils/logger';
+import { DisposableManager } from '../../utils/disposableManager';
 
 describe('Workflow Integration', () => {
     let autoFixer: CopilotAutoFixer;
     let sandbox: sinon.SinonSandbox;
     let mockEditor: vscode.TextEditor;
-    let disposables: vscode.Disposable[] = [];
+    let testDisposables: DisposableManager;
+    let decorationType: vscode.TextEditorDecorationType;
 
     beforeEach(async () => {
+        // Create fresh instances for each test
+        testDisposables = new DisposableManager();
         sandbox = sinon.createSandbox();
-        
-        // Initialize logger first
         Logger.init();
-        
-        // Mock vscode APIs
+
+        // Create decorations first
+        const decorationType = vscode.window.createTextEditorDecorationType({});
+        testDisposables.add(decorationType);
+
+        // Mock window APIs before creating editor
+        sandbox.stub(vscode.window, 'createTextEditorDecorationType')
+            .returns(decorationType);
+
+        // Create mock editor
         mockEditor = {
             document: {
                 uri: { fsPath: '/test/file.ts' },
@@ -29,26 +39,22 @@ describe('Workflow Integration', () => {
             selection: new vscode.Selection(0, 0, 0, 0)
         } as any;
 
-        // Mock command registration before creating AutoFixer
-        sandbox.stub(vscode.commands, 'registerCommand').returns({
-            dispose: () => {}
-        });
+        // Mock document display
+        sandbox.stub(vscode.window, 'showTextDocument')
+            .resolves(mockEditor);
 
-         // Create AutoFixer after mocks
-         autoFixer = new CopilotAutoFixer();
-        
-         // Store all disposables
-         disposables.push(autoFixer);
-     });
+        // Mock command registration
+        sandbox.stub(vscode.commands, 'registerCommand')
+            .returns({ dispose: () => {} });
 
-     afterEach(() => {
-        // Cleanup in reverse order
-        while (disposables.length) {
-            const disposable = disposables.pop();
-            if (disposable) {
-                disposable.dispose();
-            }
-        }
+        // Create AutoFixer last
+        autoFixer = new CopilotAutoFixer();
+        testDisposables.add(autoFixer);
+    });
+
+    afterEach(() => {
+        // Dispose in correct order
+        testDisposables.dispose();
         sandbox.restore();
         Logger.dispose();
     });

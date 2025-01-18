@@ -31,24 +31,24 @@ export class FixValidator {
         if (!this.isValidCode(fixedCode)) {
             return false;
         }
-    
+
         // Accept identical code if it's valid
         if (originalCode === fixedCode) {
             return true;
         }
-    
+
+        // Check similarity only for different code
+        const similarity = this.calculateSimilarity(originalCode, fixedCode);
+        if (similarity < this.MIN_SIMILARITY_RATIO) {
+            return false;
+        }
+
         // Check length difference
         const lengthRatio = Math.max(
             originalCode.length / fixedCode.length,
             fixedCode.length / originalCode.length
         );
-        if (lengthRatio > this.MAX_LENGTH_DIFF_RATIO) {
-            return false;
-        }
-    
-        // Check similarity only for different code
-        const similarity = this.calculateSimilarity(originalCode, fixedCode);
-        return similarity >= this.MIN_SIMILARITY_RATIO;
+        return lengthRatio <= this.MAX_LENGTH_DIFF_RATIO;
     }
 
     private calculateSimilarity(str1: string, str2: string): number {

@@ -7,6 +7,7 @@ import * as sinon from 'sinon';
 import chaiAsPromised from 'chai-as-promised';
 import chai from 'chai';
 import { Logger } from '../../utils/logger';
+import { DisposableManager } from '../../utils/disposableManager';
 
 chai.use(chaiAsPromised);
 
@@ -15,9 +16,10 @@ describe('CopilotAutoFixer', () => {
     let mockEditor: vscode.TextEditor;
     let mockDocument: vscode.TextDocument;
     let sandbox: sinon.SinonSandbox;
-    let disposables: vscode.Disposable[] = [];
+    let disposables: DisposableManager;
 
     beforeEach(() => {
+        disposables = new DisposableManager();
         sandbox = sinon.createSandbox();
         // Mock command registration
         sandbox.stub(vscode.commands, 'registerCommand').returns({
@@ -28,6 +30,7 @@ describe('CopilotAutoFixer', () => {
         Logger.init();
         
         autoFixer = new CopilotAutoFixer();
+        disposables.add(autoFixer);
         
         mockDocument = {
             uri: { fsPath: '/test/file.ts' },
@@ -40,13 +43,13 @@ describe('CopilotAutoFixer', () => {
         } as any;
 
         sandbox.stub(vscode.workspace, 'isTrusted').value(true);
+
     });
 
     afterEach(() => {
+        disposables.dispose();
         sandbox.restore();
         Logger.dispose();
-        disposables.forEach(d => d.dispose());
-        disposables = [];
     });
 
     describe('attemptFix', () => {

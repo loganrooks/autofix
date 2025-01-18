@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
+import { DisposableManager } from './disposableManager';
 
 export class Logger {
     private static channel: vscode.OutputChannel;
+    private static disposables = new DisposableManager();
+
 
     static init(): void {
         this.channel = vscode.window.createOutputChannel('Copilot AutoFixer');
@@ -23,8 +26,6 @@ export class Logger {
     }
 
     static dispose(): void {
-        if (this.channel) {
-            this.channel.dispose();
-        }
+        this.disposables.dispose();
     }
 }
