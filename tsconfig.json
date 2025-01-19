@@ -15,7 +15,14 @@
       "esModuleInterop": true,
       "resolveJsonModule": true,    // Add: Allow importing JSON files
       "declaration": true,          // Add: Generate declaration files
-      "skipLibCheck": true         // Add: Skip type checking of declaration files
+      "skipLibCheck": true,         // Add: Skip type checking of declaration files
+      "types": [
+        "node",
+        "mocha",
+        "chai",
+        "sinon",
+        "sinon-chai"  // Add this line
+    ]
     },
     "include": [                   // Add: Explicitly include source files
       "src/**/*"
