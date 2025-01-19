@@ -1,3 +1,6 @@
+import * as ts from 'typescript';
+
+
 export interface ValidationRule {
     name: string;
     validate(code: string): boolean;
@@ -10,45 +13,71 @@ export class FixValidator {
 
 
     constructor(customRules: ValidationRule[] = []) {
+        // Ensure custom rules are added after built-in rules
         this.rules = [
             {
                 name: 'syntaxCheck',
                 validate: (code: string): boolean => {
                     try {
-                        Function('return ' + code);
-                        return true;
+                        return this.isValidCode(code);
                     } catch {
                         return false;
                     }
                 }
             },
-            ...customRules
+            ...customRules // Spread custom rules after built-in rules
         ];
     }
 
     async validateFix(originalCode: string, fixedCode: string): Promise<boolean> {
-        // Always validate syntax first
-        if (!this.isValidCode(fixedCode)) {
+        if (!originalCode || !fixedCode) {
             return false;
         }
 
-        // Accept identical code if it's valid
-        if (originalCode === fixedCode) {
+        try {
+            // Basic validation checks first
+            if (originalCode === fixedCode && !this.isValidCode(fixedCode)) {
+                return false;
+            }
+
+            // Length validation
+            const lengthRatio = Math.max(
+                originalCode.length / fixedCode.length,
+                fixedCode.length / originalCode.length
+            );
+            if (lengthRatio > this.MAX_LENGTH_DIFF_RATIO) {
+                return false;
+            }
+
+            // Code validation
+            if (!this.isValidCode(fixedCode)) {
+                return false;
+            }
+
+            // Similarity check
+            const similarity = this.calculateSimilarity(originalCode, fixedCode);
+            if (similarity < this.MIN_SIMILARITY_RATIO) {
+                return false;
+            }
+
+            // Apply each validation rule sequentially
+            for (const rule of this.rules) {
+                try {
+                    // Handle both sync and async validation
+                    const result = rule.validate(fixedCode);
+                    const isValid = await Promise.resolve(result);
+                    if (!isValid) {
+                        return false;
+                    }
+                } catch (error) {
+                    return false;
+                }
+            }
+
             return true;
-        }
-
-        // Check similarity only for different code
-        const similarity = this.calculateSimilarity(originalCode, fixedCode);
-        if (similarity < this.MIN_SIMILARITY_RATIO) {
+        } catch (error) {
             return false;
         }
-
-        // Check length difference
-        const lengthRatio = Math.max(
-            originalCode.length / fixedCode.length,
-            fixedCode.length / originalCode.length
-        );
-        return lengthRatio <= this.MAX_LENGTH_DIFF_RATIO;
     }
 
     private calculateSimilarity(str1: string, str2: string): number {
@@ -78,8 +107,52 @@ export class FixValidator {
 
     private isValidCode(code: string): boolean {
         try {
-            Function('return ' + code);
-            return true;
+            // First try as a complete statement/declaration
+            try {
+                new Function(code);
+                return true;
+            } catch {
+                // If that fails, try as an expression
+                try {
+                    new Function(`return (${code})`);
+                    return true;
+                } catch {
+                    // Finally try TypeScript validation
+                    const sourceFile = ts.createSourceFile(
+                        'test.ts',
+                        code,
+                        ts.ScriptTarget.Latest,
+                        true
+                    );
+    
+                    // Create a proper CompilerHost
+                    const host: ts.CompilerHost = {
+                        fileExists: () => true,
+                        readFile: () => code,
+                        getSourceFile: (fileName) => 
+                            fileName === 'test.ts' ? sourceFile : undefined,
+                        writeFile: () => {},
+                        getCurrentDirectory: () => '',
+                        getCanonicalFileName: (f: string) => f,
+                        useCaseSensitiveFileNames: () => true,
+                        getNewLine: () => '\n',
+                        getDefaultLibFileName: () => 'lib.d.ts'
+                    };
+    
+                    const program = ts.createProgram({
+                        rootNames: ['test.ts'],
+                        options: {
+                            target: ts.ScriptTarget.Latest,
+                            module: ts.ModuleKind.CommonJS,
+                            noEmit: true
+                        },
+                        host
+                    });
+    
+                    const diagnostics = ts.getPreEmitDiagnostics(program, sourceFile);
+                    return diagnostics.length === 0;
+                }
+            }
         } catch {
             return false;
         }
