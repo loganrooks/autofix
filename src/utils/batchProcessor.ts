@@ -39,10 +39,10 @@ export class BatchProcessor<T> {
                                 try {
                                     await itemProcessor(item);
                                 } catch (error) {
-                                    Logger.error(
-                                        'Failed to process item',
-                                        error instanceof Error ? error : new Error(String(error))
-                                    );
+                                    const errorMessage = error instanceof Error 
+                                    ? `Failed to process item: ${error.message}`
+                                    : `Failed to process item: ${String(error)}`;
+                                Logger.error(errorMessage);
                                 }
                             })
                         );
@@ -88,17 +88,19 @@ export class BatchProcessor<T> {
                                 try {
                                     await this.processItem(item);
                                 } catch (error: unknown) {
-                                    Logger.error('Failed to process item', 
-                                        error instanceof Error ? error : new Error(String(error))
-                                    );
+                                    const errorMessage = error instanceof Error 
+                                        ? `Failed to process item: ${error.message}`
+                                        : `Failed to process item: ${String(error)}`;
+                                    Logger.error(errorMessage);
                                 }
                             })
                         );
                     }
                 } catch (error: unknown) {
-                    Logger.error('Batch processing failed', 
-                        error instanceof Error ? error : new Error(String(error))
-                    );
+                    const errorMessage = error instanceof Error
+                        ? `Batch processing failed: ${error.message}`
+                        : `Batch processing failed: ${String(error)}`;
+                    Logger.error(errorMessage);
                 } finally {
                     this.processing = false;
                 }
