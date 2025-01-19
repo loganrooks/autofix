@@ -1,8 +1,5 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs';
 import { FileBackupManager } from './utils/backup';
-import { CommandExecutor } from './utils/command';
 import { FixHistory } from './utils/fixHistory';
 import { FixValidator } from './utils/fixValidator';
 import { TelemetryReporter } from './utils/telemetry';
@@ -15,10 +12,13 @@ import { RetryStrategy } from './utils/retryStrategy';
 import { BatchProcessor } from './utils/batchProcessor';
 import { WorkspaceTrustError } from './errors';
 import { DisposableManager } from './utils/disposableManager';
+import { FixDecision } from './types/enums';
 
 /**
  * Main class responsible for fixing code issues using GitHub Copilot
  */
+
+
 export class CopilotAutoFixer {
     // Core services
     private readonly cache: FixCache;
@@ -36,8 +36,6 @@ export class CopilotAutoFixer {
     private readonly statusBarItem: vscode.StatusBarItem;
     private isFixing: boolean = false;
 
-    // Configuration
-    private readonly config: Settings;
 
     constructor() {
         // Initialize core services
@@ -46,11 +44,9 @@ export class CopilotAutoFixer {
         this.validator = new FixValidator();
         this.errorClassifier = new ErrorClassifier();
         this.fixHistory = new FixHistory();
-        this.disposables = new DisposableManager();  
-
-        
-        // Load configuration
-        this.config = Settings.configuration;
+        this.disposables = new DisposableManager();
+        this.backupManager = new FileBackupManager();
+        this.telemetry = new TelemetryReporter();
 
         // Initialize UI
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
@@ -58,38 +54,26 @@ export class CopilotAutoFixer {
         this.statusBarItem.show();
         this.disposables.add(this.statusBarItem);
 
-        this.backupManager = new FileBackupManager();
-        this.telemetry = new TelemetryReporter();
-
-         // Initialize batch processor with unified pipeline
-         this.batchProcessor = new BatchProcessor<vscode.TextDocument>(
+        // Initialize batch processor
+        this.batchProcessor = new BatchProcessor<vscode.TextDocument>(
             Settings.configuration.batchSize || 5,
             async (document) => {
                 await this.fixDocument(document);
             }
         );
 
-
+        // Register commands
         this.disposables.add(
             vscode.commands.registerCommand('copilotAutoFixer.fix', this.attemptFix.bind(this))
         );
         this.disposables.add(
             vscode.commands.registerCommand('copilotAutoFixer.undo', this.undo.bind(this))
-        )
+        );
         
         this.disposables.add(this.backupManager);
         this.disposables.add(this.telemetry);
     }
 
-    
-
-    /**
-     * Attempts to fix code issues in the given editor
-     * @param editor The active text editor
-     * @throws {WorkspaceTrustError} If workspace is not trusted
-     * @throws {ValidationError} If fix validation fails
-     */
-   
     private async requestCopilotFix(error: Error, errorType: ErrorType): Promise<string> {
         if (!error?.message) {
             throw new Error('Invalid error object provided');
@@ -109,7 +93,8 @@ export class CopilotAutoFixer {
     
             return suggestions[0];
         } catch (error) {
-            Logger.error('Copilot API error', error instanceof Error ? error : new Error(String(error)));
+            const errorMsg = `Copilot API error: ${error instanceof Error ? error.message : String(error)}`;
+            Logger.error(errorMsg);
             throw new Error('Failed to get fix from Copilot');
         }
     }
@@ -147,22 +132,15 @@ export class CopilotAutoFixer {
         return false;
     }
 
-    private async handleFixError(error: Error, document: vscode.TextDocument): Promise<void> {
-        Logger.error('Fix failed', error);
-        await this.backupManager.backup(document);
-        this.updateStatus('Fix failed: ' + error.message);
-        throw error;
-    }
-
     private async previewAndApplyFix(
         fix: string, 
         document: vscode.TextDocument,
         range: vscode.Range
-    ): Promise<boolean> {
+    ): Promise<FixDecision> {
         if (!Settings.configuration.previewFixes) {
-            return true;
+            return FixDecision.Apply;
         }
-    
+
         // Create decoration type for the fix preview
         const decorationType = vscode.window.createTextEditorDecorationType({
             after: {
@@ -192,12 +170,12 @@ export class CopilotAutoFixer {
             const result = await vscode.window.showInformationMessage(
                 'Apply this fix?',
                 { modal: true },
-                'Apply',
-                'Skip',
-                'Stop'
-            );
-    
-            return result === 'Apply';
+                FixDecision.Apply,
+                FixDecision.Skip,
+                FixDecision.Stop
+            ) as FixDecision || FixDecision.Skip;
+            
+            return result;
         } finally {
             // Cleanup
             decorationType.dispose();
@@ -225,22 +203,15 @@ export class CopilotAutoFixer {
                 throw new Error('Failed to apply undo');
             }
         } catch (error) {
-            Logger.error('Undo failed', error instanceof Error ? error : new Error(String(error)));
+            const errorMessage = `Undo failed: ${error instanceof Error ? error.message : String(error)}`;
+            Logger.error(errorMessage);
             this.telemetry.trackEvent('fix_undone', { success: false });
             this.updateStatus('Failed to undo fix');
             throw error;
         }
     }
 
-    private updateUndoStatus(): void {
-        if (this.fixHistory.hasFixes()) {
-            this.statusBarItem.text = "$(arrow-left) Undo Copilot Fix";
-            this.statusBarItem.show();
-        } else {
-            this.statusBarItem.hide();
-        }
-    }
-
+   
     private async getActiveDocument(): Promise<vscode.TextDocument> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -309,6 +280,8 @@ export class CopilotAutoFixer {
                 await this.backupManager.restore(document, backupKey);
                 throw error;
             }
+        } catch (error) {
+            Logger.error(`Failed to fix document: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
             this.isFixing = false;
         }
@@ -348,40 +321,46 @@ export class CopilotAutoFixer {
         const error = new Error(diagnostic.message);
         const errorType = this.errorClassifier.classify(error.message);
         
-        // Check cache
+        // Check cache first
         const cachedFix = this.cache.get(error.message, error.stack || '');
         if (cachedFix?.success) {
             return this.applyFix(document, diagnostic.range, cachedFix.fix);
         }
-    
-        // Get and validate fix
+
         try {
             const fix = await this.retryStrategy.retry(
-                async () => this.requestCopilotFix(error, errorType), // Pass errorType to provide context
-                Settings.configuration.maxAttempts // Use Settings instead of this.config
+                async () => this.requestCopilotFix(error, errorType),
+                Settings.configuration.maxAttempts
             );
-    
-            if (!await this.validator.validateFix(
-                document.getText(diagnostic.range), 
-                fix
-            )) {
+
+            if (!await this.validator.validateFix(document.getText(diagnostic.range), fix)) {
                 return false;
             }
-    
-            // Preview if enabled
-            if (Settings.configuration.previewFixes && // Use Settings instead of this.config
-                !await this.previewAndApplyFix(fix, document, diagnostic.range)) {
-                return false;
+
+            if (Settings.configuration.previewFixes) {
+                const decision = await this.previewAndApplyFix(fix, document, diagnostic.range);
+                
+                switch (decision) {
+                    case FixDecision.Apply:
+                        return this.applyFix(document, diagnostic.range, fix);
+                    case FixDecision.Stop:
+                        this.batchProcessor.clear(); // Clear the queue
+                        return false;
+                    case FixDecision.Skip:
+                    default:
+                        return false;
+                }
             }
-    
-            // Apply fix
+
             return this.applyFix(document, diagnostic.range, fix);
-        } catch (error: unknown) { // Add type annotation
-            Logger.error('Fix failed', error instanceof Error ? error : new Error(String(error)));
+            
+        } catch (error: unknown) {
+            const errorMessage = `Fix failed: ${error instanceof Error ? error.message : String(error)}`;
+            Logger.error(errorMessage);
             return false;
         }
     }
-    
+
     dispose(): void {
         // Only dispose items implementing vscode.Disposable
         this.disposables.dispose();
