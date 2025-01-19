@@ -3,6 +3,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import { runTests } from '@vscode/test-electron';
 
+
 async function createTestWorkspace(tmpDir: string, timestamp: string): Promise<string> {
     const workspacePath = path.resolve(tmpDir, `vscode-test-workspace-${timestamp}`);
     try {
@@ -65,7 +66,7 @@ async function main() {
             extensionTestsPath,
             workspacePath: globalWorkspacePath
         });
-
+                
         // Run tests
         await runTests({
             extensionDevelopmentPath,
