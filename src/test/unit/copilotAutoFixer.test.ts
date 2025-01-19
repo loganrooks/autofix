@@ -2,90 +2,113 @@ import * as vscode from 'vscode';
 import { CopilotAutoFixer } from '../../copilotAutoFixer';
 import { WorkspaceTrustError } from '../../errors';
 import { describe, it, beforeEach, afterEach } from 'mocha';
-import { expect } from 'chai';
-import * as sinon from 'sinon';
+import { chai } from '../testSetup';
 import chaiAsPromised from 'chai-as-promised';
-import chai from 'chai';
-import { Logger } from '../../utils/logger';
-import { DisposableManager } from '../../utils/disposableManager';
+import { expect } from 'chai';
+import { TestHelper } from '../testHelper';
+import { TestEnvironment } from '../types/testEnvironment';
 
 chai.use(chaiAsPromised);
 
 describe('CopilotAutoFixer', () => {
+    const testHelper = TestHelper.getInstance();
+    let testEnv: TestEnvironment;
     let autoFixer: CopilotAutoFixer;
-    let mockEditor: vscode.TextEditor;
-    let mockDocument: vscode.TextDocument;
-    let sandbox: sinon.SinonSandbox;
-    let disposables: DisposableManager;
 
-    beforeEach(() => {
-        disposables = new DisposableManager();
-        sandbox = sinon.createSandbox();
-        // Mock command registration
-        sandbox.stub(vscode.commands, 'registerCommand').returns({
-            dispose: () => {}
+    beforeEach(async () => {
+        
+        const documentConfig = {
+            uri: vscode.Uri.parse('file:///test/file.ts'),
+            getText: () => 'test code'
+        };
+        
+        // Create test environment with base configuration - editor.document will be set after
+        testEnv = await testHelper.createTestEnvironment({
+            document: documentConfig,
+            editor: {
+                document: undefined // Will be set after document creation
+            },
+            stubs: {
+                workspace: {
+                    isTrusted: true
+                },
+                languages: {
+                    getDiagnostics: [
+                        new vscode.Diagnostic(
+                            new vscode.Range(0, 0, 0, 1),
+                            'test error',
+                            vscode.DiagnosticSeverity.Error
+                        )
+                    ]
+                }
+            }
         });
-        
-        // Initialize logger before tests
-        Logger.init();
-        
+
+  
+
+        // Initialize system under test
         autoFixer = new CopilotAutoFixer();
-        disposables.add(autoFixer);
-        
-        mockDocument = {
-            uri: { fsPath: '/test/file.ts' },
-            getText: sandbox.stub().returns('test code'),
-            lineCount: 1
-        } as any;
-
-        mockEditor = {
-            document: mockDocument
-        } as any;
-
-        sandbox.stub(vscode.workspace, 'isTrusted').value(true);
-
     });
 
-    afterEach(() => {
-        disposables.dispose();
-        sandbox.restore();
-        Logger.dispose();
+    afterEach(async () => {
+        if (autoFixer) {
+            autoFixer.dispose();
+        }
+        await testHelper.cleanup();
     });
 
     describe('attemptFix', () => {
         it('should throw WorkspaceTrustError if workspace is not trusted', async () => {
-            sandbox.stub(vscode.workspace, 'isTrusted').value(false);
-            await expect(autoFixer.attemptFix(mockEditor))
+            // Arrange
+            testEnv.sandbox.stub(vscode.workspace, 'isTrusted').value(false);
+
+            // Act & Assert
+            await expect(autoFixer.attemptFix(testEnv.mocks.editor!))
                 .to.be.rejectedWith(WorkspaceTrustError);
         });
     
         it('should process fixes for document with diagnostics', async () => {
-            const diagnostics = [
-                new vscode.Diagnostic(
-                    new vscode.Range(0, 0, 0, 1),
-                    'test error',
-                    vscode.DiagnosticSeverity.Error
-                )
-            ];
             
-            sandbox.stub(vscode.languages, 'getDiagnostics')
-                .returns([[mockDocument.uri, diagnostics]]);
             
-            const processFix = sandbox.stub(autoFixer as any, 'processFix')
-                .resolves(true);
+            
+            if (!testEnv.mocks.document || !testEnv.mocks.editor) {
+                throw new Error('Mocks not created');
+            }
+            
+            // Reset state and setup stubs
+            autoFixer['isFixing'] = false;
     
-            await autoFixer.attemptFix(mockEditor);
+            
+            const processFix = testEnv.sandbox.stub(autoFixer as any, 'processFix')
+                .resolves(true);
+
+            // Act
+            await autoFixer.attemptFix(testEnv.mocks.editor!);
+
+            // Assert
             expect(processFix.calledOnce).to.be.true;
+            expect(processFix.firstCall.args).to.deep.equal([
+                testEnv.mocks.document,
+                testEnv.stubs?.languages?.getDiagnostics?.[0]
+            ]);
         });
     });
 
     describe('fixMultiple', () => {
         it('should process multiple documents in batches', async () => {
-            const documents = [mockDocument, mockDocument];
-            const processDocuments = sandbox.stub(autoFixer['batchProcessor'], 'processDocuments')
+            if (!testEnv.mocks.document) {
+                throw new Error('Mock document not created');
+            }
+
+            // Arrange
+            const documents = [testEnv.mocks.document, testEnv.mocks.document];
+            const processDocuments = testEnv.sandbox.stub(autoFixer['batchProcessor'], 'processDocuments')
                 .resolves();
 
+            // Act
             await autoFixer.fixMultiple(documents);
+
+            // Assert
             expect(processDocuments.calledOnce).to.be.true;
             expect(processDocuments.firstCall.args[0]).to.deep.equal(documents);
         });
@@ -93,6 +116,7 @@ describe('CopilotAutoFixer', () => {
 
     describe('processFix', () => {
         it('should check cache before requesting new fix', async () => {
+            // Arrange
             const diagnostic = new vscode.Diagnostic(
                 new vscode.Range(0, 0, 0, 1),
                 'test error',
@@ -105,14 +129,53 @@ describe('CopilotAutoFixer', () => {
                 timestamp: Date.now()
             };
         
-            sandbox.stub(autoFixer['cache'], 'get')
+            testEnv.sandbox.stub(autoFixer['cache'], 'get')
                 .returns(cachedFix);
-        
-            sandbox.stub(vscode.workspace, 'applyEdit')
+    
+            // Configure workspace stubs in test environment instead of direct stubbing
+            testEnv.stubs.workspace = {
+                ...testEnv.stubs.workspace,
+                applyEdit: true
+            };
+    
+            testEnv.sandbox.stub(autoFixer['validator'], 'validateFix')
                 .resolves(true);
-        
-            const result = await autoFixer['processFix'](mockDocument, diagnostic);
+    
+            // Act
+            const result = await autoFixer['processFix'](testEnv.mocks.document!, diagnostic);
+    
+            // Assert
             expect(result).to.be.true;
+        });
+    
+        it('should request new fix when cache miss occurs', async () => {
+            // Arrange
+            const diagnostic = new vscode.Diagnostic(
+                new vscode.Range(0, 0, 0, 1),
+                'test error',
+                vscode.DiagnosticSeverity.Error
+            );
+    
+            testEnv.sandbox.stub(autoFixer['cache'], 'get')
+                .returns(undefined);
+    
+            const requestFix = testEnv.sandbox.stub(autoFixer as any, 'requestCopilotFix')
+                .resolves('new fix');
+    
+            testEnv.sandbox.stub(autoFixer['validator'], 'validateFix')
+                .resolves(true);
+    
+            // Configure workspace stubs in test environment instead of direct stubbing
+            testEnv.stubs.workspace = {
+                ...testEnv.stubs.workspace,
+                applyEdit: true
+            };
+    
+            // Act
+            await autoFixer['processFix'](testEnv.mocks.document!, diagnostic);
+    
+            // Assert
+            expect(requestFix.calledOnce).to.be.true;
         });
     });
 });
