@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import { Uri } from 'vscode';
+
 
 export class MockTextDocument {
     uri: any;
@@ -50,6 +52,7 @@ export enum StatusBarAlignment {
     Right = 2
 }
 
+
 export class MockStatusBarItem {
     public text: string = '';
     public tooltip?: string;
@@ -95,8 +98,29 @@ export const workspace = {
     openTextDocument: async (_uri: any) => new MockTextDocument()
 };
 
+const defaultDocument = new MockTextDocument('test.ts', 'test content');
+
 export const languages = {
-    getDiagnostics: (_uri: any) => []
+    getDiagnostics: (uri?: Uri) => {
+        const diagnostics = [
+            new Diagnostic(
+                new Range(
+                    new Position(0, 0),
+                    new Position(0, 1)
+                ),
+                'test error',
+                DiagnosticSeverity.Error
+            )
+        ];
+        
+        // Return diagnostics for any URI passed
+        if (uri) {
+            return diagnostics;
+        }
+        
+        // When no URI is passed, return array of tuples with diagnostics for mockDocument
+        return [[uri || defaultDocument.uri, diagnostics]];
+    }
 };
 
 export const commands = {
