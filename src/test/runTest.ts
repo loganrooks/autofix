@@ -4,6 +4,24 @@ import * as os from 'os';
 import { runTests } from '@vscode/test-electron';
 
 
+async function setupCoverage(projectRoot: string): Promise<void> {
+    if (process.env.COVERAGE) {
+        const nycConfig = {
+            include: ['src/**/*.ts'],
+            exclude: ['src/test/**', '**/node_modules/**'],
+            all: true,
+            reporter: ['text', 'html'],
+            'report-dir': path.join(projectRoot, 'coverage')
+        };
+
+        // Ensure coverage directory exists
+        await fs.mkdir(path.join(projectRoot, 'coverage'), { recursive: true });
+        process.env.NYC_CONFIG = JSON.stringify(nycConfig);
+    }
+}
+
+
+
 async function createTestWorkspace(tmpDir: string, timestamp: string): Promise<string> {
     const workspacePath = path.resolve(tmpDir, `vscode-test-workspace-${timestamp}`);
     try {
@@ -57,6 +75,8 @@ async function main() {
         const extensionDevelopmentPath = projectRoot;
         const extensionTestsPath = path.resolve(__dirname, './suite');
 
+        await setupCoverage(projectRoot);
+
         // Setup test workspace
         globalWorkspacePath = await createTestWorkspace(tmpDir, timestamp);
         await copyFixtures(projectRoot, globalWorkspacePath);
@@ -66,25 +86,34 @@ async function main() {
             extensionTestsPath,
             workspacePath: globalWorkspacePath
         });
+
+        // Run tests with coverage if enabled
+        const launchArgs = [
+            globalWorkspacePath,
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-workspace-trust'
+        ];
+
+        if (process.env.COVERAGE === '1') {
+            launchArgs.push('--enable-coverage');
+        }
+
+
                 
         // Run tests
         await runTests({
             extensionDevelopmentPath,
             extensionTestsPath,
-            launchArgs: [
-                globalWorkspacePath,
-                '--disable-gpu',
-                '--disable-extensions',
-                '--disable-updates',
-                '--disable-workspace-trust',
-                '--user-data-dir=/tmp/vscode-test-user-data'
-            ],
+            launchArgs,
             extensionTestsEnv: {
                 ELECTRON_ENABLE_LOGGING: '1',
                 VSCODE_SKIP_PRELAUNCH: '1',
                 MOCHA_TIMEOUT: '60000'
             }
         });
+
+
 
         await cleanup(globalWorkspacePath);
         process.exit(0);

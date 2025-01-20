@@ -5,8 +5,18 @@ import { chai } from '../testSetup';
 import chaiAsPromised from 'chai-as-promised';
 import sinonChai from 'sinon-chai';
 import { TestHelper } from '../testHelper';
+import { setupCoverage } from '../testSetup';
+
 
 export async function run(): Promise<void> {
+      // Setup coverage pre-test, including post-test hook to report
+    let nyc: any;
+    if (process.env.COVERAGE) {
+        nyc = setupCoverage();
+        await nyc.reset();
+        await nyc.wrap();
+    }
+ 
     // Setup chai plugins
     chai.use(chaiAsPromised);
     chai.use(sinonChai);
@@ -41,12 +51,29 @@ export async function run(): Promise<void> {
         }
 
         // Run tests
-        return new Promise<void>((resolve, reject) => {
-            mocha.run(failures => {
-                failures > 0 ? reject(new Error(`${failures} tests failed.`)) : resolve();
-            });
-        });
+        const failures: number = await new Promise(resolve => mocha.run(resolve));
+
+
+        if (process.env.COVERAGE) {
+            await nyc.writeCoverageFile();
+            console.log(await captureStdout(nyc.report.bind(nyc)));
+        }
+
+        if (failures > 0) {
+            throw new Error(`${failures} tests failed.`);
+          }
+
+
     } catch (err) {
         throw err instanceof Error ? err : new Error(String(err));
     }
 }
+
+
+async function captureStdout(fn: () => void): Promise<string> {
+    let w = process.stdout.write, buffer = '';
+    process.stdout.write = (s) => { buffer = buffer + s; return true; };
+    await fn();
+    process.stdout.write = w;
+    return buffer;
+  }
